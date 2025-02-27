@@ -4,9 +4,15 @@ import torchaudio
 import subprocess
 from transformers import AutoModelForSpeechSeq2Seq, AutoProcessor, pipeline
 import io
+from pydub import AudioSegment
+import numpy as np
+import os
 
 # Set the encoding for stdout to UTF-8
 sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')
+
+# Set CUDA_LAUNCH_BLOCKING for better error messages
+os.environ["CUDA_LAUNCH_BLOCKING"] = "1"
 
 def convert_to_wav(input_path, output_path):
     """
@@ -14,7 +20,7 @@ def convert_to_wav(input_path, output_path):
     ffmpeg のパスはご利用環境に合わせて書き換えてください。
     """
     command = [
-        "C:/ffmpeg-7.1-essentials_build/bin/ffmpeg", "-y", "-i", input_path,
+        "ffmpeg", "-y", "-i", input_path,
         "-ar", "16000", output_path
     ]
     subprocess.run(command, check=True)
@@ -32,7 +38,9 @@ def main():
 
     # ----- 2) Whisper 推論 -----
     # モデルID
-    model_id = "openai/whisper-large-v3-turbo"
+    # model_id = "openai/whisper-large-v3-turbo"
+    model_id = "kotoba-tech/kotoba-whisper-v2.0"
+
 
     # 今回は torch.float16 を強制的に使用
     # GPU がない環境ではエラーになる可能性があります
@@ -60,15 +68,17 @@ def main():
         device=0  # デバイスはGPU:0 (CUDA) を示すために int で書いています
     )
 
-    # 音声を torchaudio で読み込み
-    waveform, sample_rate = torchaudio.load(output_wav)
+    # 音声を pydub で読み込み
+    audio = AudioSegment.from_wav(output_wav)
+    waveform = np.array(audio.get_array_of_samples(), dtype=np.float32)
+    sample_rate = audio.frame_rate
 
     # モノラル変換 (ステレオの場合)
-    if waveform.size(0) == 2:
-        waveform = waveform.mean(dim=0, keepdim=True)
+    if audio.channels == 2:
+        waveform = waveform.reshape((-1, 2)).mean(axis=1)
 
     input_audio = {
-        "array": waveform.squeeze().numpy(),
+        "array": waveform,
         "sampling_rate": sample_rate
     }
 

@@ -1,117 +1,103 @@
 import sys
 import subprocess
+import os
 import torch
+from dotenv import load_dotenv
+from huggingface_hub import login
 from transformers import AutoModelForCausalLM, AutoTokenizer
 from tqdm import tqdm
+
+# Load environment variables from .env file
+load_dotenv()
+
+os.environ["CUDA_LAUNCH_BLOCKING"] = "1"
+os.environ["TORCH_USE_CUDA_DSA"] = "1"
+
+# Use environment variable for HF token
+access_token = os.environ.get("HF_TOKEN")
+if access_token:
+    login(token=access_token)
+else:
+    print("Warning: HF_TOKEN environment variable not set. Some features may not work correctly.")
 
 def main():
     if len(sys.argv) < 2:
         print("Usage: python main.py <input_m4a_file>", file=sys.stderr)
         sys.exit(1)
 
-    input_m4a = sys.argv[1]
-
-    # Pythonコマンドのパス (現在動作中のPythonを使う場合)
+    input_file = sys.argv[1]
     python_cmd = sys.executable
 
-    # --- (1) Whisper推論をサブプロセスで呼び出す ---
-    proc = subprocess.Popen(
-        [python_cmd, "whisper_inference.py", input_m4a],
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        universal_newlines=True,
-        encoding="utf-8",
-        errors="replace"
-    )
+    if input_file.endswith(".m4a"):
+        # Whisper推論
+        proc = subprocess.Popen([python_cmd, "whisper_inference.py", input_file],
+                                stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                universal_newlines=True, encoding="utf-8", errors="replace")
+        stdout, stderr = proc.communicate()
 
-    stdout, stderr = proc.communicate()
+        if proc.returncode != 0:
+            print("サブプロセスでエラーが発生:", stderr, file=sys.stderr)
+            sys.exit(1)
 
-    if proc.returncode != 0:
-        print("サブプロセスでエラーが発生:", stderr, file=sys.stderr)
+        recognized_text = stdout.strip()
+        file = open("transcription.txt", "w", encoding="utf-8")
+        file.write(recognized_text)
+        file.close()
+    elif input_file.endswith(".txt"):
+        with open(input_file, "r", encoding="utf-8") as f:
+            recognized_text = f.read().strip()
+    else:
+        print("Unsupported file type. Please provide a .m4a or .txt file.", file=sys.stderr)
         sys.exit(1)
 
-    recognized_text = stdout.strip()
     print("=== Recognized text ===")
     print(recognized_text)
 
-    # ここでサブプロセスが終了 → サブプロセスで確保していた GPU メモリは OS レベルで解放
-
-    # --- (2) Gemmaで要約・文法修正を行う処理 ---
-    # 必要に応じてGPUを使うかどうか決める
+    # デバイス選択
     device = "cuda:0" if torch.cuda.is_available() else "cpu"
     torch_dtype = torch.float16 if torch.cuda.is_available() else torch.float32
 
     model_name = "google/gemma-2-2b-jpn-it"
-
-    # Gemma モデルとトークナイザをロード
     gemma_tokenizer = AutoTokenizer.from_pretrained(model_name)
-    gemma_model = AutoModelForCausalLM.from_pretrained(
-        model_name,
-        torch_dtype=torch_dtype
-    ).to(device)
+    gemma_model = AutoModelForCausalLM.from_pretrained(model_name, torch_dtype=torch_dtype).to(device)
 
-    # --- (A) テキストをチャンク分割して、段階的に要約・文法修正 ---
-    CHUNK_SIZE = 1024  # 例: 500文字ごとに分割（適宜調整してください）
-
-    text_chunks = []
-    current = 0
-
-    while current < len(recognized_text):
-        text_chunks.append(recognized_text[current:current + CHUNK_SIZE])
-        current += CHUNK_SIZE
+    # Create overlapping text chunks
+    chunk_size = 1024
+    overlap = 100
+    text_chunks = [recognized_text[i:i + chunk_size] for i in range(0, len(recognized_text), chunk_size - overlap)]
 
     summaries = []
     for chunk in tqdm(text_chunks):
-        # 各チャンクごとに文法修正＋簡易要約
-        prompt_text = (
-            "以下のテキストを日本語の文法を修正しながら分かりやすくまとめてください：\n"
-            + chunk
-        )
-
-        # トークナイズ
+        prompt_text = "以下のテキストを要約してください：\n" + chunk
         input_ids = gemma_tokenizer(prompt_text, return_tensors="pt").input_ids.to(device)
 
-        # Gemma推論
-        outputs = gemma_model.generate(
-            input_ids,
-            max_new_tokens=128,      # 出力トークン数（大きすぎるとメモリ負荷増大）
-            do_sample=True,
-            top_p=0.95,
-            temperature=0.2,
-            repetition_penalty=1.05,
-        )
+        if input_ids.numel() == 0:
+            print("Warning: input_ids is empty. Skipping this chunk.")
+            continue
 
-        # 要約・修正結果
-        corrected_text_chunk = gemma_tokenizer.decode(outputs[0], skip_special_tokens=True)
-        summaries.append(corrected_text_chunk)
+        max_length = gemma_model.config.max_position_embeddings
+        max_new_tokens = min(128, max_length - input_ids.shape[1])
 
-    # --- (B) 各チャンクの要約を結合し、さらに全体を再要約 ---
-    all_text = "\n".join(summaries)
+        outputs = gemma_model.generate(input_ids, max_new_tokens=max_new_tokens, do_sample=False)
+        summaries.append(gemma_tokenizer.decode(outputs[0], skip_special_tokens=True))
 
-    # 最後に、全体を読みやすくまとめ直す
-    final_prompt_text = (
-        "以下の文章をより簡潔にまとめてください：\n" + all_text
-    )
+    final_text = "\n".join(summaries)
 
-    input_ids = gemma_tokenizer(final_prompt_text, return_tensors="pt").input_ids.to(device)
+    # Summarize the concatenated summaries
+    prompt_text = "以下は議事録を細切れにして、それぞれ要約して、再度結合した文章です。さらに、要約してく、議事録として提示してください。：\n" + final_text
+    input_ids = gemma_tokenizer(prompt_text, return_tensors="pt").input_ids.to(device)
 
-    final_outputs = gemma_model.generate(
-        input_ids,
-        max_new_tokens=512,
-        do_sample=True,
-        top_p=0.95,
-        temperature=0.2,
-        repetition_penalty=1.05,
-    )
+    if input_ids.numel() > 0:
+        max_length = gemma_model.config.max_position_embeddings
+        max_new_tokens = max(1, min(128, max_length - input_ids.shape[1]))  # Ensure max_new_tokens is greater than 0
 
-    final_text = gemma_tokenizer.decode(final_outputs[0], skip_special_tokens=True)
+        outputs = gemma_model.generate(input_ids, max_new_tokens=max_new_tokens, do_sample=False)
+        final_summary = gemma_tokenizer.decode(outputs[0], skip_special_tokens=True)
+    else:
+        final_summary = "Warning: input_ids is empty. No final summary generated."
 
-    print("=== Gemma final summary text ===")
-    print(final_text)
-
-    # 必要に応じてファイルに書き出し
     with open("Corrected_Transcription.txt", "w", encoding="utf-8") as f:
-        f.write(final_text)
+        f.write(final_summary)
 
 if __name__ == "__main__":
     main()
