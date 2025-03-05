@@ -1,0 +1,56 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>音声文字起こしアプリ</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/styles.css') }}">
+    <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+JP:wght@300;400;500;700&display=swap" rel="stylesheet">
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>音声文字起こしツール</h1>
+            <p>音声ファイルをアップロードして文字に変換します</p>
+        </header>
+        
+        <main>
+            <div class="upload-container">
+                <div class="file-drop-area" id="dropArea">
+                    <input type="file" id="audioFile" accept=".mp3,.wav,.ogg,.m4a,.flac" class="file-input">
+                    <div class="file-msg">
+                        <img src="{{ url_for('static', filename='img/upload.svg') }}" alt="Upload" class="upload-icon">
+                        <p>ファイルをドラッグ＆ドロップ<br>または<br><span class="select-button">ファイルを選択</span></p>
+                        <p class="file-name" id="fileName"></p>
+                    </div>
+                </div>
+                
+                <div class="controls">
+                    <button id="transcribeBtn" class="btn primary" disabled>文字起こし開始</button>
+                </div>
+                
+                <div class="loading-indicator" id="loadingIndicator">
+                    <div class="spinner"></div>
+                    <p>処理中...</p>
+                </div>
+            </div>
+            
+            <div class="result-container">
+                <h2>文字起こし結果</h2>
+                <textarea id="transcriptionResult" readonly placeholder="文字起こし結果がここに表示されます"></textarea>
+                <div class="buttons">
+                    <button id="copyBtn" class="btn secondary" disabled>コピー</button>
+                    <button id="downloadBtn" class="btn secondary" disabled>ダウンロード</button>
+                    <button id="clearBtn" class="btn secondary" disabled>クリア</button>
+                </div>
+            </div>
+        </main>
+        
+        <footer>
+            <p>© 2023 音声文字起こしツール</p>
+        </footer>
+    </div>
+    
+    <script src="{{ url_for('static', filename='js/main.js') }}"></script>
+</body>
+</html>
