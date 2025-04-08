@@ -10,6 +10,9 @@ document.addEventListener('DOMContentLoaded', () => {
     const downloadBtn = document.getElementById('downloadBtn');
     const clearBtn = document.getElementById('clearBtn');
 
+    // Maximum file size (in bytes) - 500MB
+    const MAX_FILE_SIZE = 500 * 1024 * 1024;
+
     // Drag and drop functionality
     ['dragenter', 'dragover', 'dragleave', 'drop'].forEach(eventName => {
         dropArea.addEventListener(eventName, preventDefaults, false);
@@ -35,7 +38,11 @@ document.addEventListener('DOMContentLoaded', () => {
     dropArea.addEventListener('drop', (e) => {
         const file = e.dataTransfer.files[0];
         if (isValidAudioFile(file)) {
-            handleFile(file);
+            if (isValidFileSize(file)) {
+                handleFile(file);
+            } else {
+                showError('ファイルサイズが大きすぎます。500MB未満のファイルを選択してください。');
+            }
         } else {
             showError('サポートされていないファイル形式です。音声ファイル（.mp3, .wav, .ogg, .m4a, .flac）を選択してください。');
         }
@@ -46,7 +53,12 @@ document.addEventListener('DOMContentLoaded', () => {
         if (fileInput.files.length > 0) {
             const file = fileInput.files[0];
             if (isValidAudioFile(file)) {
-                handleFile(file);
+                if (isValidFileSize(file)) {
+                    handleFile(file);
+                } else {
+                    showError('ファイルサイズが大きすぎます。500MB未満のファイルを選択してください。');
+                    fileInput.value = '';
+                }
             } else {
                 showError('サポートされていないファイル形式です。音声ファイル（.mp3, .wav, .ogg, .m4a, .flac）を選択してください。');
                 fileInput.value = '';
@@ -66,11 +78,22 @@ document.addEventListener('DOMContentLoaded', () => {
         return file && validTypes.includes(file.type) || /\.(mp3|wav|ogg|m4a|flac)$/i.test(file.name);
     }
 
+    // Check if file size is valid
+    function isValidFileSize(file) {
+        return file.size <= MAX_FILE_SIZE;
+    }
+
     // Transcribe button click
     transcribeBtn.addEventListener('click', async () => {
         if (!fileInput.files.length) return;
 
         const file = fileInput.files[0];
+        // Check file size again before upload
+        if (!isValidFileSize(file)) {
+            showError('ファイルサイズが大きすぎます。500MB未満のファイルを選択してください。');
+            return;
+        }
+        
         const formData = new FormData();
         formData.append('audio', file);
 
@@ -93,7 +116,21 @@ document.addEventListener('DOMContentLoaded', () => {
                 downloadBtn.disabled = false;
                 clearBtn.disabled = false;
             } else {
-                showError(data.error || 'エラーが発生しました。再度お試しください。');
+                let errorMessage = 'エラーが発生しました。再度お試しください。';
+                if (response.status === 413) {
+                    errorMessage = 'ファイルサイズが大きすぎます。500MB未満のファイルを選択してください。';
+                }
+                
+                try {
+                    const errorData = await response.json();
+                    if (errorData.error) {
+                        errorMessage = errorData.error;
+                    }
+                } catch (e) {
+                    // If we can't parse JSON, just use the default error message
+                }
+                
+                showError(errorMessage);
             }
         } catch (error) {
             showError('通信エラーが発生しました。インターネット接続を確認してください。');

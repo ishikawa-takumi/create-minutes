@@ -18,7 +18,7 @@ static_dir = os.path.join(project_dir, 'static')
 
 # Explicitly set the static folder path
 app = Flask(__name__, static_folder=static_dir)
-app.config['MAX_CONTENT_LENGTH'] = 100 * 1024 * 1024  # 最大100MBまでのファイルを許可
+app.config['MAX_CONTENT_LENGTH'] = 500 * 1024 * 1024  # 最大200MBまでのファイルを許可
 
 @app.route('/')
 def index():
@@ -30,9 +30,12 @@ def transcribe():
     """音声ファイルをアップロードして文字起こしする"""
     # ファイルが存在するか確認
     if 'audio' not in request.files:
+        print("音声ファイルが見つかりません")
         return jsonify({"error": "音声ファイルがありません"}), 400
         
+    print("音声ファイルを取得中")
     audio_file = request.files['audio']
+    print(f"受信したファイル名: {audio_file.filename}")
     
     # ファイル名が空でないか確認
     if audio_file.filename == '':
@@ -76,12 +79,16 @@ def main():
     """コマンドラインからの実行時のエントリーポイント"""
     parser = argparse.ArgumentParser(description="音声からテキストを生成します")
     parser.add_argument("--server", action="store_true", help="Webサーバーとして起動する")
+    parser.add_argument("--host", default="0.0.0.0", help="サーバーのホストアドレス (デフォルト: 0.0.0.0 - すべてのネットワークインターフェース)")
+    parser.add_argument("--port", type=int, default=5000, help="サーバーのポート番号 (デフォルト: 5000)")
     
     args = parser.parse_args()
     
     if args.server:
         # Webサーバーモードで起動
-        app.run(debug=True)
+        print(f"サーバーを起動しています - http://{args.host}:{args.port}")
+        print("ローカルネットワーク上の他のデバイスからは、このコンピュータのIPアドレスを使ってアクセスできます")
+        app.run(debug=True, host=args.host, port=args.port)
     else:
         # CLIモードで実行
         content = ""
@@ -96,4 +103,4 @@ def main():
                 
 
 if __name__ == "__main__":
-    main()  # Changed from app.run(debug=True) to properly use the main function
+    main()
